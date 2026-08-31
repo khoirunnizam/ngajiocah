@@ -45,6 +45,17 @@ export default function Header() {
           >
             Mushaf
           </NavLink>
+          <NavLink
+            to="/komunitas"
+            className={({ isActive }) =>
+              `px-4 py-1.5 rounded-custom-sm font-medium text-sm text-text-muted border border-transparent transition-all ${isActive
+                ? 'text-accent bg-accent/12 border-accent/30'
+                : 'hover:text-text-heading hover:bg-accent/8 hover:border-accent/20'
+              }`
+            }
+          >
+            Komunitas
+          </NavLink>
         </nav>
       </div>
     </header>

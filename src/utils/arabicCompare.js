@@ -16,39 +16,43 @@ export function normalizeArabic(str = '') {
     // ── Pengecualian: lafal "الله/لله" dan bentuk berimbuhan (بالله, تالله, dst).
     // Alif kecil (dagger alif, U+0670) di sini murni tanda vokal panjang pada
     // huruf lam kedua — BUKAN representasi huruf alif tersendiri yang dielisi
-    // dari rasm (beda dengan kasus مَٰلِكِ di bawah). Ejaan kata ini, baik di
-    // mushaf maupun tulisan Arab pada umumnya, TIDAK PERNAH menyisipkan huruf
-    // alif terpisah ("للاه") — selalu "لله"/"الله". Maka di sini alif kecil
-    // dibuang saja seperti harakat biasa, DIJALANKAN SEBELUM aturan umum di
-    // bawah yang mengubah alif kecil jadi huruf alif utuh.
+    // dari rasm.
     .replace(/ل\u0651?\u0670(?=ه)/g, (m) => m.replace(/\u0670/, ''))
+
+    // ── Pengecualian: alif maksura + dagger alif di akhir kata (عَلَىٰ, يَتَامَىٰ,
+    // مُصْطَفَىٰ, عِيسَىٰ, dst). Dagger alif di sini murni penanda panjang bacaan
+    // pada huruf ى itu sendiri — BUKAN huruf alif tambahan yang berdiri sendiri.
+    // Harus diproses SEBELUM rule generik \u0670 → 'ا' di bawah, dan SEBELUM
+    // rule ى → ي di bawah, supaya tidak menghasilkan huruf ganda (mis. "عليا"
+    // alih-alih "علي" untuk kata عَلَىٰ).
+    .replace(/ى\u0670/g, 'ي')
 
     // Alif kecil di atas huruf (dagger alif / alif khanjariyah, U+0670) DIUBAH
     // JADI huruf alif biasa ('ا'), BUKAN dihapus, untuk kasus umum lainnya —
-    // dagger alif mewakili SATU HURUF PENUH (bunyi "aa" panjang) yang cuma
-    // ditulis ringkas dalam rasm utsmani — misalnya "مَٰلِكِ" (Al-Fatihah 1:4)
-    // ditulis tanpa alif penuh, memakai alif kecil di atas huruf ل.
-    // Kalau dihapus begitu saja, kata rasm "ملك" (3 huruf setelah normalisasi)
-    // TIDAK AKAN PERNAH cocok dengan ejaan biasa hasil speech-to-text "مالك"
-    // (4 huruf), padahal bunyi & maknanya identik. Harus diproses SETELAH
-    // pengecualian الله di atas, dan SEBELUM baris penghapusan harakat di
-    // bawah, supaya tidak ikut terbuang di sana.
+    // misalnya "مَٰلِكِ" (Al-Fatihah 1:4), "هَٰذَا", "رَحْمَٰن".
     .replace(/\u0670/g, 'ا')
-    // harakat, tanwin, sukun, tanda quran (waqaf dll), lainnya — ini murni
-    // penanda bunyi pendek/berhenti (bukan huruf tersendiri), aman dihapus
+
+    // Harakat, tanwin, sukun, tanda quran (waqaf dll), lainnya
     .replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED\u08D4-\u08FF]/g, '')
-    // tatweel (garis sambung)
+
+    // Tatweel (garis sambung)
     .replace(/\u0640/g, '')
-    // samakan bentuk alef & hamza di atas/bawah alef
+
+    // Samakan bentuk alef & hamza di atas/bawah alef
     .replace(/[إأآٱا]/g, 'ا')
-    // alef maksura -> ya
+
+    // Alif maksura (ى) disamakan dengan Ya (ي) agar konsisten
+    // dengan hasil STT (misal: "على" vs "علي" terbaca sama)
     .replace(/ى/g, 'ي')
-    // ta marbuta -> ha (biar "الرحمة" vs "الرحمه" dianggap sama)
+
+    // Ta marbuta -> ha (biar "الرحمة" vs "الرحمه" dianggap sama)
     .replace(/ة/g, 'ه')
-    // hamza di atas wawu/ya -> huruf dasarnya
+
+    // Hamza di atas wawu/ya -> huruf dasarnya
     .replace(/ؤ/g, 'و')
     .replace(/ئ/g, 'ي')
-    // buang selain huruf Arab & spasi (angka, tanda baca, dsb)
+
+    // Buang selain huruf Arab & spasi (angka, tanda baca, dsb)
     .replace(/[^\u0621-\u064A\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
