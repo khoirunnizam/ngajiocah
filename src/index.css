@@ -1,0 +1,103 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Custom Base Styles ────────────────────────────────────────────── */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    @apply box-border m-0 p-0;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans min-h-screen antialiased;
+  }
+
+  #root {
+    @apply min-h-screen flex flex-col;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  button {
+    @apply cursor-pointer font-sans;
+  }
+
+  input {
+    @apply font-sans;
+  }
+}
+
+/* ─── Custom Scrollbar ─────────────────────────────────────────────── */
+@layer utilities {
+  .scrollbar-custom {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(184, 134, 59, 0.35) #f7f3ea;
+  }
+
+  .scrollbar-custom::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  .scrollbar-custom::-webkit-scrollbar-track {
+    @apply bg-bg;
+  }
+
+  .scrollbar-custom::-webkit-scrollbar-thumb {
+    @apply bg-accent/35 rounded;
+  }
+}
+
+/* ─── Custom Components ────────────────────────────────────────────── */
+@layer components {
+  /* Container utility */
+  .container {
+    @apply max-w-7xl mx-auto px-6;
+  }
+
+  /* Page spacing */
+  .page {
+    @apply flex-1 py-8 md:py-12;
+  }
+
+  /* Glass card */
+  .glass {
+    @apply bg-bg-glass border border-border rounded-custom backdrop-blur-custom;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide;
+  }
+
+  .badge-blue {
+    @apply bg-accent/15 text-accent;
+  }
+
+  .badge-purple {
+    @apply bg-accent-2/15 text-accent-2;
+  }
+
+  .badge-gold {
+    @apply bg-accent-gold/15 text-accent-gold;
+  }
+
+  .badge-green {
+    @apply bg-accent-green/15 text-accent-green;
+  }
+
+  /* Spinner */
+  .spinner {
+    @apply w-10 h-10 border-2 border-accent/20 border-t-accent rounded-full animate-spin my-20 mx-auto;
+  }
+
+  /* Error box */
+  .error-box {
+    @apply text-center py-16 px-6 text-red-400;
+  }
+}
