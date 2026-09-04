@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getSurah, getJuz, getAllSurahs, getPage, EDITIONS } from '../services/quranApi';
-import { normalizeArabic, normalizeMuqattaahInText, isMuqattaahWordMatch, getTranscriptDelta } from '../utils/arabicCompare';
+import { normalizeArabic, normalizeMuqattaahInText, isMuqattaahWordMatch, matchMuqattaahSequence } from '../utils/arabicCompare';
 import HafalanPickerPopup from '../components/HafalanPickerPopup';
 import WrongAnswerPopup from '../components/WrongAnswerPopup';
 
@@ -73,10 +73,11 @@ function buildWrongResult(targetWords, cursor, wrongSpokenWords) {
 }
 
 export default function MushafPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate       = useNavigate();
   const surahParam     = searchParams.get('surah');
   const juzParam       = searchParams.get('juz');
+  const hafalanParam   = searchParams.get('hafalan'); // ?hafalan=1 → auto buka popup hafalan
 
   const [pageRange,   setPageRange]   = useState(null); // { start, end } — dipakai untuk dot cepat & label awal
   const [pageNum,     setPageNum]     = useState(null);  // nomor halaman mushaf absolut yang sedang aktif (1..604)
@@ -111,13 +112,14 @@ export default function MushafPage() {
   const [interimText, setInterimText] = useState('');
   const [micError, setMicError]       = useState(null);
   const [wrongPopup, setWrongPopup]   = useState(null); // { correctSteps, userSteps }
-  const recognitionRef   = useRef(null);
-  const manualStopRef    = useRef(true);  // true = user memang minta berhenti (jangan auto-restart)
-  const spokenWordsRef   = useRef([]);    // kata-kata (sudah dinormalisasi) yang menunggu dicocokkan ke ayat aktif
-  const targetAyahRef    = useRef(null);  // ref ke ayat target terkini, supaya callback recognition selalu lihat data terbaru
-  const wordCursorRef    = useRef(0);     // indeks kata FINAL berikutnya yang diharapkan pada ayat target (0-based)
-  const wrongStreakRef   = useRef(0);     // hitungan kata salah berturut-turut
-  const sessionFinalTextRef = useRef(''); // akumulasi teks final sesi berjalan untuk ekstraksi delta (anti-duplikasi di HP)
+  const recognitionRef       = useRef(null);
+  const manualStopRef        = useRef(true);  // true = user memang minta berhenti (jangan auto-restart)
+  const spokenWordsRef       = useRef([]);    // kata-kata (sudah dinormalisasi) yang menunggu dicocokkan ke ayat aktif
+  const targetAyahRef        = useRef(null);  // ref ke ayat target terkini, supaya callback recognition selalu lihat data terbaru
+  const wordCursorRef        = useRef(0);     // indeks kata FINAL berikutnya yang diharapkan pada ayat target (0-based)
+  const wrongStreakRef       = useRef(0);     // hitungan kata salah berturut-turut
+  const sessionStartIndexRef = useRef(0);     // indeks result pertama yang boleh diproses dalam sesi ini (anti-bocor lintas sesi/ayat)
+  const lastProcessedIdxRef  = useRef(-1);    // indeks result FINAL terakhir yang sudah dikirim ke evaluateBuffer sesi ini
   const wakeLockRef      = useRef(null);  // menjaga layar HP tetap hidup saat merekam hafalan
 
   // Ref kursor hafalan yang selalu terbaru (dibaca & DIUPDATE sinkron di dalam evaluateBuffer),
@@ -259,6 +261,14 @@ export default function MushafPage() {
     setShowHafalanPopup(true);
   };
 
+  // Auto-buka popup hafalan jika user klik "Hafalan" dari navbar (?hafalan=1)
+  useEffect(() => {
+    if (hafalanParam === '1' && !loading && pageData) {
+      openHafalanPopup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hafalanParam, loading, pageData]);
+
   const popupSurahInfo = allSurahs.find(s => s.number === Number(popupSurah));
   const popupMaxAyah   = popupSurahInfo?.numberOfAyahs ?? 999;
 
@@ -273,7 +283,8 @@ export default function MushafPage() {
       spokenWordsRef.current = []; // reset buffer kata untuk sesi baru
       wordCursorRef.current = 0;
       wrongStreakRef.current = 0;
-      sessionFinalTextRef.current = '';
+      sessionStartIndexRef.current = 0;
+      lastProcessedIdxRef.current = -1;
       setTargetWordCursor(0);
       setRevealedAyat(new Set());
       hafalanCursorRef.current = target.number; // nomor ayat global (ref dibaca segera oleh evaluateBuffer)
@@ -283,6 +294,8 @@ export default function MushafPage() {
       setWrongPopup(null);
       setInterimText('');
       setMicError(null);
+      // Hapus query param ?hafalan=1 dari URL setelah sesi dimulai
+      setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('hafalan'); return p; }, { replace: true });
 
       if (target.page !== pageNum) {
         setPageNum(target.page);
@@ -380,8 +393,42 @@ export default function MushafPage() {
       const targetWords = normalizeMuqattaahInText(getAyahDisplayText(ayah)).split(' ').filter(Boolean);
       if (targetWords.length === 0) { spokenWordsRef.current.shift(); continue; }
 
-      const word = spokenWordsRef.current[0];
       const cursor = wordCursorRef.current;
+      if (cursor >= targetWords.length) return;
+
+      // 0) Cek kecocokan rangkaian huruf Muqatta'ah (streaming / pembacaan bertahap)
+      const muqattaahMatch = matchMuqattaahSequence(spokenWordsRef.current, targetWords[cursor]);
+      if (muqattaahMatch.status === "full") {
+        spokenWordsRef.current.splice(0, muqattaahMatch.consumedCount);
+        wordCursorRef.current += 1;
+        wrongStreakRef.current = 0;
+        setTargetWordCursor(wordCursorRef.current);
+
+        if (wordCursorRef.current >= targetWords.length) {
+          setRevealedAyat(prev => new Set(prev).add(ayah.number));
+          setWrongPopup(null);
+          wordCursorRef.current = 0;
+          wrongStreakRef.current = 0;
+
+          if (ayah.number >= 6236) {
+            setHafalanActive(false);
+            hafalanCursorRef.current = null;
+            setHafalanCursor(null);
+            setTargetWordCursor(0);
+            return;
+          }
+          hafalanCursorRef.current = ayah.number + 1;
+          setHafalanCursor(ayah.number + 1);
+          setTargetWordCursor(0);
+        }
+        continue;
+      } else if (muqattaahMatch.status === "partial") {
+        // User baru membaca sebagian huruf muqatta'ah (mis. baru baca "الف" untuk "الم", sedang melanjutkan "لام ميم")
+        // JANGAN disalahkan, biarkan buffer menunggu kata berikutnya dari rekaman suara
+        return;
+      }
+
+      const word = spokenWordsRef.current[0];
 
       // 1) Cocok dengan kata yang diharapkan berikutnya → maju
       if (cursor < targetWords.length && wordsMatch(word, targetWords[cursor])) {
@@ -450,7 +497,8 @@ export default function MushafPage() {
       try { rec.stop?.(); } catch {}
       recognitionRef.current = null;
     }
-    sessionFinalTextRef.current = '';
+    sessionStartIndexRef.current = 0;
+    lastProcessedIdxRef.current = -1;
     if (wakeLockRef.current) {
       try { wakeLockRef.current.release(); } catch {}
       wakeLockRef.current = null;
@@ -473,6 +521,11 @@ export default function MushafPage() {
 
     cleanupRecognition();
 
+    // Reset indeks sesi baru: semua result sebelum indeks ini DIABAIKAN,
+    // sehingga kata-kata dari sesi/ayat sebelumnya tidak masuk ke evaluasi ayat baru.
+    sessionStartIndexRef.current = 0;
+    lastProcessedIdxRef.current = -1;
+
     // Minta wakeLock di HP agar layar tidak mati saat menghafal
     if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
       navigator.wakeLock.request('screen').then(wl => { wakeLockRef.current = wl; }).catch(() => {});
@@ -486,10 +539,12 @@ export default function MushafPage() {
       recognition.maxAlternatives = 1;
 
       recognition.onresult = (event) => {
+        // Jika popup salah sedang aktif, JANGAN proses apapun — mic seharusnya tidak restart
         if (wrongPopupRef.current) return;
 
-        let fullSessionFinal = '';
+        let newFinalText = '';
         let interim = '';
+        let highestFinalIdx = lastProcessedIdxRef.current;
 
         for (let i = 0; i < event.results.length; i++) {
           const result = event.results[i];
@@ -497,36 +552,41 @@ export default function MushafPage() {
           const t = result[0].transcript || '';
 
           if (result.isFinal) {
-            fullSessionFinal += ' ' + t;
+            // Hanya proses result baru yang belum pernah dikirim ke evaluator
+            // dan hanya dari sesi yang valid (>= sessionStartIndexRef)
+            if (i >= sessionStartIndexRef.current && i > lastProcessedIdxRef.current) {
+              newFinalText += ' ' + t;
+              highestFinalIdx = i;
+            }
           } else {
-            interim += t;
+            // Interim: hanya tampilkan dari sesi yang sedang berjalan
+            if (i >= sessionStartIndexRef.current) {
+              interim += t;
+            }
           }
         }
 
-        fullSessionFinal = fullSessionFinal.trim();
-        setInterimText(interim);
+        // Update indeks terakhir yang sudah diproses
+        if (highestFinalIdx > lastProcessedIdxRef.current) {
+          lastProcessedIdxRef.current = highestFinalIdx;
+        }
 
+        setInterimText(interim);
         if (interim.trim()) {
           previewOptimisticReveal(interim);
         }
 
-        // Ekstraksi delta cerdas: hanya ambil kata baru, tidak mengulang kata lama (anti-duplikasi HP)
-        if (fullSessionFinal) {
-          const delta = getTranscriptDelta(sessionFinalTextRef.current, fullSessionFinal);
-          sessionFinalTextRef.current = fullSessionFinal;
+        if (newFinalText.trim()) {
+          const hasLatinChars = /[a-zA-Z]/.test(newFinalText);
+          const normalizedText = normalizeMuqattaahInText(newFinalText);
+          const newWords = normalizedText.split(' ').filter(Boolean);
 
-          if (delta.trim()) {
-            const hasLatinChars = /[a-zA-Z]/.test(delta);
-            const normalizedDelta = normalizeMuqattaahInText(delta);
-            const newWords = normalizedDelta.split(' ').filter(Boolean);
-
-            if (newWords.length === 0 && hasLatinChars) {
-              setMicError('Mic mendeteksi karakter non-Arab. Pastikan pelafalan jelas dan bahasa mikrofon berbahasa Arab.');
-            } else if (newWords.length > 0) {
-              setMicError(null);
-              spokenWordsRef.current = [...spokenWordsRef.current, ...newWords];
-              evaluateBuffer();
-            }
+          if (newWords.length === 0 && hasLatinChars) {
+            setMicError('Mic mendeteksi karakter non-Arab. Pastikan pelafalan jelas.');
+          } else if (newWords.length > 0) {
+            setMicError(null);
+            spokenWordsRef.current = [...spokenWordsRef.current, ...newWords];
+            evaluateBuffer();
           }
         }
       };
@@ -546,19 +606,31 @@ export default function MushafPage() {
           manualStopRef.current = true;
           setMicState('idle');
           setMicError('Mikrofon tidak terdeteksi pada perangkat Anda.');
-        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          // Jangan tampilkan error mengganggu saat no-speech / aborted biasa di HP
         }
+        // no-speech / aborted: abaikan — normal terjadi di HP
       };
 
       recognition.onend = () => {
-        sessionFinalTextRef.current = '';
-        if (!manualStopRef.current && hafalanActiveRef.current) {
+        // Reset indeks sesi saat mic restart — kata dari sesi lama TIDAK boleh masuk lagi
+        sessionStartIndexRef.current = 0;
+        lastProcessedIdxRef.current = -1;
+
+        // Hanya auto-restart jika:
+        // - User tidak meminta berhenti (manualStop)
+        // - Hafalan masih aktif
+        // - TIDAK sedang menampilkan popup salah (wrongPopup harus null)
+        const shouldRestart = !manualStopRef.current
+          && hafalanActiveRef.current
+          && !wrongPopupRef.current;
+
+        if (shouldRestart) {
           restartTimerRef.current = setTimeout(() => {
-            if (!manualStopRef.current && hafalanActiveRef.current) {
+            if (!manualStopRef.current && hafalanActiveRef.current && !wrongPopupRef.current) {
               createAndStartRecognition();
+            } else {
+              setMicState('idle');
             }
-          }, 300);
+          }, 350);
         } else {
           setMicState('idle');
         }
@@ -568,12 +640,14 @@ export default function MushafPage() {
       recognition.start();
       setMicState('listening');
     } catch {
-      if (!manualStopRef.current && hafalanActiveRef.current) {
+      if (!manualStopRef.current && hafalanActiveRef.current && !wrongPopupRef.current) {
         restartTimerRef.current = setTimeout(() => {
-          if (!manualStopRef.current && hafalanActiveRef.current) {
+          if (!manualStopRef.current && hafalanActiveRef.current && !wrongPopupRef.current) {
             createAndStartRecognition();
+          } else {
+            setMicState('idle');
           }
-        }, 350);
+        }, 400);
       } else {
         setMicState('idle');
       }
@@ -592,10 +666,12 @@ export default function MushafPage() {
     setMicError(null);
     setWrongPopup(null);
     setInterimText('');
+    // Reset seluruh state buffer kata agar kata-kata ayat sebelumnya tidak bocor
     spokenWordsRef.current = [];
     wordCursorRef.current = 0;
     wrongStreakRef.current = 0;
-    sessionFinalTextRef.current = '';
+    sessionStartIndexRef.current = 0;
+    lastProcessedIdxRef.current = -1;
     setTargetWordCursor(0);
     manualStopRef.current = false;
     createAndStartRecognition();
@@ -608,17 +684,20 @@ export default function MushafPage() {
   };
 
   const retrySameAyah = () => {
+    // Reset TOTAL semua buffer — jangan biarkan kata sisa ayat/sesi sebelumnya masuk
     spokenWordsRef.current = [];
     wordCursorRef.current = 0;
     wrongStreakRef.current = 0;
-    sessionFinalTextRef.current = '';
+    sessionStartIndexRef.current = 0;
+    lastProcessedIdxRef.current = -1;
     setTargetWordCursor(0);
     setWrongPopup(null);
     setInterimText('');
     setMicError(null);
-    if (manualStopRef.current) {
-      startListening();
-    }
+    // Selalu stop dulu lalu mulai bersih — jangan bergantung pada state manualStop
+    manualStopRef.current = true;
+    cleanupRecognition();
+    setTimeout(() => startListening(), 150);
   };
 
   const skipRevealAnyway = () => {

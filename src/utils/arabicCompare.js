@@ -97,88 +97,169 @@ export const MUQATTAAH_ALIASES = {
   ],
 };
 
+/*
+ * Urutan kata per huruf untuk penanganan pembacaan Muqatta'ah secara bertahap (streaming/mad panjang)
+ */
+export const MUQATTAAH_SEQUENCES = {
+  الم: [
+    ["الف", "لام", "ميم"],
+    ["الف", "لا", "ميم"],
+    ["الف", "لام", "مين"],
+    ["الف", "لام", "مييم"],
+    ["الم"]
+  ],
+  المص: [
+    ["الف", "لام", "ميم", "صاد"],
+    ["الف", "لام", "ميم", "ص"],
+    ["المص"]
+  ],
+  الر: [
+    ["الف", "لام", "را"],
+    ["الف", "لام", "راء"],
+    ["الف", "لام", "ر"],
+    ["الر"]
+  ],
+  المر: [
+    ["الف", "لام", "ميم", "را"],
+    ["الف", "لام", "ميم", "راء"],
+    ["المر"]
+  ],
+  كهيعص: [
+    ["كاف", "ها", "يا", "عين", "صاد"],
+    ["كاف", "هاء", "يا", "عين", "صاد"],
+    ["كاف", "ها", "ياء", "عين", "صاد"],
+    ["كاف", "هاء", "ياء", "عين", "صاد"],
+    ["كاف", "ه", "ي", "عين", "صاد"],
+    ["كهيعص"]
+  ],
+  طه: [
+    ["طا", "ها"],
+    ["طا", "هاء"],
+    ["طاء", "ها"],
+    ["طاء", "هاء"],
+    ["ط", "ه"],
+    ["طه"]
+  ],
+  طسم: [
+    ["طا", "سين", "ميم"],
+    ["طاء", "سين", "ميم"],
+    ["طا", "سين", "مين"],
+    ["طسم"]
+  ],
+  طس: [
+    ["طا", "سين"],
+    ["طاء", "سين"],
+    ["طس"]
+  ],
+  يس: [
+    ["يا", "سين"],
+    ["ياء", "سين"],
+    ["يس"]
+  ],
+  حم: [
+    ["حا", "ميم"],
+    ["حاء", "ميم"],
+    ["حا", "مين"],
+    ["حم"]
+  ],
+  عسق: [
+    ["عين", "سين", "قاف"],
+    ["عين", "سين", "ق"],
+    ["عسق"]
+  ],
+  "حم عسق": [
+    ["حا", "ميم", "عين", "سين", "قاف"],
+    ["حاء", "ميم", "عين", "سين", "قاف"],
+    ["حم", "عسق"]
+  ],
+  ص: [["صاد"], ["ص"]],
+  ق: [["قاف"], ["ق"]],
+  ن: [["نون"], ["ن"]],
+};
+
 /* ============================================================
    BASIC ARABIC NORMALIZATION
 ============================================================ */
 
 /**
  * Normalisasi dasar teks Arab.
- * Menghilangkan harakat, tanda waqaf, dan menyatukan ragam alif/hamzah/ya.
+ * Menghilangkan harakat, tanda waqaf, dan menyelaraskan ejaan Rasm Utsmani
+ * dengan output standar Speech Recognition (mis. ذٰلِكَ -> ذلك, عَلَىٰ -> علي).
  */
 export function normalizeArabic(str = "") {
-  return (
-    String(str)
-      /*
-       * Dagger alif pada lafaz Allah (اللّٰه -> الله).
-       */
-      .replace(/ل\u0651?\u0670(?=ه)/g, (m) => m.replace(/\u0670/, ""))
+  let s = String(str || "");
 
-      /*
-       * Waw dengan dagger alif pada rasm Utsmani (الصَّلَوٰة -> الصلاة, الزَّكَوٰة -> الزكاة, الحَيَوٰة -> الحياة, الرِّبَوٰا -> الربا).
-       */
-      .replace(/و[\u0670\u065C]?[\u0627\u0671]?\u06DF?/g, (m) => (m.includes("\u0670") ? "ا" : m))
+  // 1. Dagger alif pada lafaz Allah (اللّٰه -> الله)
+  s = s.replace(/ل\u0651?\u0670(?=ه)/g, "ل");
 
-      /*
-       * Alif maksura + dagger alif.
-       * عَلَىٰ -> علي
-       */
-      .replace(/ى\u0670/g, "ي")
+  // 2. Alif maksura + dagger alif (عَلَىٰ, إِلَىٰ, حَتَّىٰ, بَلَىٰ, مُوسَىٰ, etc.) -> jadikan ى biasa tanpa dagger alif
+  s = s.replace(/ى[\u0670\u065C\u06DF]?/g, "ى");
 
-      /*
-       * Dagger alif umum (الرَّحْمَٰن -> الرحمان -> الرحمن).
-       */
-      .replace(/\u0670/g, "ا")
+  // 3. Waw dengan dagger alif pada rasm Utsmani (الصَّلَوٰة -> الصلاة, الزَّكَوٰة -> الزكاة, الحَيَوٰة -> الحياة, الرِّبَوٰا -> الربا)
+  s = s.replace(/و[\u0670\u065C]?[\u0627\u0671]?\u06DF?/g, (m) => (m.includes("\u0670") ? "ا" : m));
 
-      /*
-       * Harakat dan tanda baca Qur'an (fathah, kasrah, dhammah, sukun, syaddah, tanwin, tanda waqaf rasm).
-       */
-      .replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED\u08D4-\u08FF]/g, "")
+  // 4. Kata tunjuk / partikel khusus yang di Rasm Utsmani memakai dagger alif tapi di bahasa Arab standar / STT tanpa alif:
+  // ذَٰلِكَ, ذَٰلِكُمْ -> ذلك, ذلكم
+  s = s.replace(/ذ[\u064B-\u065F]*\u0670[\u064B-\u065F]*ل/g, "ذل");
+  // هَٰذَا, هَٰذِهِ, هَٰؤُلَاءِ -> هذا, هذه, هؤلاء
+  s = s.replace(/ه[\u064B-\u065F]*\u0670[\u064B-\u065F]*(?=[ذهؤ])/g, "ه");
+  // أُو۟لَٰٓئِكَ -> اولئك
+  s = s.replace(/ل[\u064B-\u065F]*\u0670[\u064B-\u065F\u0653\u0654]*(?=[\u0626ئ])/g, "ل");
+  // لَٰكِن, لَٰكِنَّ -> لكن
+  s = s.replace(/ل[\u064B-\u065F]*\u0670[\u064B-\u065F]*ك/g, "لك");
+  // إِلَٰه -> اله
+  s = s.replace(/ل[\u064B-\u065F]*\u0670[\u064B-\u065F]*ه/g, "له");
+  // الرَّحْمَٰن -> الرحمن
+  s = s.replace(/م[\u064B-\u065F]*\u0670[\u064B-\u065F]*ن/g, "من");
 
-      /*
-       * Tatweel (kashida).
-       */
-      .replace(/\u0640/g, "")
+  // 5. Dagger alif umum lainnya (كِتَٰب -> كتاب, صَٰلِح -> صالح, etc.)
+  s = s.replace(/\u0670/g, "ا");
 
-      /*
-       * Variasi alif dan hamzah di awal/tengah.
-       * إ أ آ ٱ ا -> ا
-       */
-      .replace(/[إأآٱا]/g, "ا")
+  // 6. Buang semua harakat dan tanda baca Qur'an (fathah, kasrah, dhammah, sukun, syaddah, tanwin, tanda waqaf rasm)
+  s = s.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED\u08D4-\u08FF]/g, "");
 
-      /*
-       * Alif maksura.
-       */
-      .replace(/ى/g, "ي")
+  // 7. Tatweel (kashida)
+  s = s.replace(/\u0640/g, "");
 
-      /*
-       * Ta marbuta (ة -> ه).
-       */
-      .replace(/ة/g, "ه")
+  // 8. Variasi alif dan hamzah di awal/tengah (إ أ آ ٱ ا -> ا)
+  s = s.replace(/[إأآٱا]/g, "ا");
 
-      /*
-       * Hamzah waw / ya / standalone hamzah.
-       */
-      .replace(/ؤ/g, "و")
-      .replace(/ئ/g, "ي")
+  // 9. Alif maksura dan ya (ى -> ي)
+  s = s.replace(/ى/g, "ي");
 
-      /*
-       * Beberapa variasi huruf keyboard/STT (Persian/Urdu variants).
-       */
-      .replace(/ک/g, "ك")
-      .replace(/ی/g, "ي")
-      .replace(/ے/g, "ي")
+  // 10. Ta marbuta (ة -> ه)
+  s = s.replace(/ة/g, "ه");
 
-      /*
-       * Buang karakter selain Arab dan spasi.
-       */
-      .replace(/[^\u0621-\u064A\s]/g, "")
+  // 11. Hamzah waw / ya / standalone hamzah
+  s = s.replace(/ؤ/g, "و");
+  s = s.replace(/ئ/g, "ي");
 
-      /*
-       * Normalisasi whitespace.
-       */
-      .replace(/\s+/g, " ")
-      .trim()
-  );
+  // 12. Variasi huruf keyboard / STT (Persian/Urdu variants)
+  s = s.replace(/ک/g, "ك");
+  s = s.replace(/ی/g, "ي");
+  s = s.replace(/ے/g, "ي");
+
+  // 13. Buang karakter selain Arab dan spasi
+  s = s.replace(/[^\u0621-\u064A\s]/g, "");
+
+  // 14. Normalisasi whitespace
+  s = s.replace(/\s+/g, " ").trim();
+
+  // 15. Penyelarasan kata-kata yang kerap memiliki selisih alif antara tulisan klasik vs STT modern:
+  const words = s.split(" ").filter(Boolean);
+  const fixedWords = words.map((w) => {
+    if (w.startsWith("ذال") && w.length >= 4) return w.replace(/^ذال/, "ذل"); // ذالك -> ذلك, ذالكم -> ذلكم
+    if (w === "هاذا") return "هذا";
+    if (w === "هاذه") return "هذه";
+    if (w === "هاولاء") return "هولاء";
+    if (w === "اولائك") return "اولئك";
+    if (w.startsWith("لاكن")) return w.replace(/^لاكن/, "لكن"); // لاكن -> لكن, لاكنه -> لكنه
+    if (w.startsWith("الاه")) return w.replace(/^الاه/, "اله"); // الاه -> اله, الاهنا -> الهنا
+    if (w === "الرحمان") return "الرحمن";
+    return w;
+  });
+
+  return fixedWords.join(" ");
 }
 
 /* ============================================================
@@ -310,6 +391,63 @@ export function isMuqattaahWordMatch(a = "", b = "") {
   if (canonB && normA === normalizeArabic(canonB)) return true;
 
   return false;
+}
+
+/**
+ * Memeriksa apakah antrean kata yang diucapkan (`spokenWords`) cocok
+ * atau sedang dalam proses membaca urutan huruf Muqatta'ah (`targetWord`).
+ *
+ * Mengembalikan:
+ * - { status: "full", consumedCount: n } -> semua huruf muqatta'ah selesai dibaca
+ * - { status: "partial", neededCount: m } -> user baru membaca sebagian huruf (mis. baru "الف" untuk "الم"), JANGAN disalahkan
+ * - { status: "none" } -> tidak ada kecocokan sama sekali
+ */
+export function matchMuqattaahSequence(spokenWords = [], targetWord = "") {
+  if (!spokenWords || !spokenWords.length || !targetWord) return { status: "none" };
+
+  const canonical = getMuqattaahCanonical(targetWord) || targetWord;
+  const sequences = MUQATTAAH_SEQUENCES[canonical];
+  if (!sequences) {
+    return { status: "none" };
+  }
+
+  const cleanSpoken = spokenWords.map((w) => normalizeArabic(w)).filter(Boolean);
+  if (!cleanSpoken.length) return { status: "none" };
+
+  // Cek apakah ada sequence yang cocok penuh atau parsial
+  for (const seq of sequences) {
+    const cleanSeq = seq.map((w) => normalizeArabic(w));
+
+    // Cek kecocokan penuh
+    if (cleanSpoken.length >= cleanSeq.length) {
+      let isFullMatch = true;
+      for (let i = 0; i < cleanSeq.length; i++) {
+        if (cleanSpoken[i] !== cleanSeq[i] && !isMuqattaahWordMatch(cleanSpoken[i], cleanSeq[i])) {
+          isFullMatch = false;
+          break;
+        }
+      }
+      if (isFullMatch) {
+        return { status: "full", consumedCount: cleanSeq.length, canonical };
+      }
+    }
+
+    // Cek kecocokan parsial (misal spokenWords baru ["الف"] dan seq adalah ["الف", "لام", "ميم"])
+    if (cleanSpoken.length < cleanSeq.length) {
+      let isPartialMatch = true;
+      for (let i = 0; i < cleanSpoken.length; i++) {
+        if (cleanSpoken[i] !== cleanSeq[i] && !isMuqattaahWordMatch(cleanSpoken[i], cleanSeq[i])) {
+          isPartialMatch = false;
+          break;
+        }
+      }
+      if (isPartialMatch) {
+        return { status: "partial", neededCount: cleanSeq.length - cleanSpoken.length, canonical };
+      }
+    }
+  }
+
+  return { status: "none" };
 }
 
 /* ============================================================

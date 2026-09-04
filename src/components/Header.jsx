@@ -49,7 +49,7 @@ export default function Header() {
             Mushaf
           </NavLink>
 
-          <NavLink to="/hafalan" className={navClass}>
+          <NavLink to="/mushaf?hafalan=1" className={navClass}>
             Hafalan
           </NavLink>
 
@@ -86,7 +86,7 @@ export default function Header() {
               Mushaf
             </NavLink>
 
-            <NavLink to="/hafalan" onClick={closeMenu} className={mobileNavClass}>
+            <NavLink to="/mushaf?hafalan=1" onClick={closeMenu} className={mobileNavClass}>
               Hafalan
             </NavLink>
 
