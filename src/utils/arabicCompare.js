@@ -1,138 +1,680 @@
 // src/utils/arabicCompare.js
-//
-// Utilitas untuk mode Hafalan: menormalisasi teks Arab (menghilangkan
-// harakat/tashkeel, menyamakan variasi huruf) dan membandingkan dua
-// kalimat kata-per-kata (word diff) supaya bisa ditandai mana yang
-// cocok dan mana yang beda antara hasil rekaman suara vs ayat asli.
+
+/*
+ * ============================================================
+ * ARABIC COMPARE
+ * ============================================================
+ *
+ * Perbandingan hasil Speech-to-Text dengan teks Al-Qur'an.
+ *
+ * Referensi teks:
+ * - Rasm Utsmani
+ *
+ * Catatan:
+ * Sistem ini menilai kemiripan TEKS hasil STT.
+ * Bukan penilaian tajwid/makhraj secara langsung.
+ */
+
+/* ============================================================
+   KONFIGURASI HURUF MUQATTA'AH
+============================================================ */
+
+/*
+ * Semua variasi yang mungkin keluar dari Speech Recognition
+ * diarahkan ke satu bentuk canonical.
+ *
+ * Contoh:
+ *
+ * "الم"
+ * "ألم"
+ * "الف لام ميم"
+ * "ألف لام ميم"
+ *
+ * semuanya menjadi:
+ *
+ * "الم"
+ */
+
+const MUQATTAAH_ALIASES = {
+  الم: ["الم", "ألم", "الف لام ميم", "ألف لام ميم", "الف لام میم", "الف لام ميم", "الفلاميم", "الفلامميم", "الفلام ميم", "الف لامميم"],
+
+  المص: ["المص", "ألمص", "الف لام ميم صاد", "ألف لام ميم صاد", "الفلامميم صاد", "الفلام ميم صاد"],
+
+  الر: ["الر", "الف لام را", "ألف لام را", "الف لام راء", "ألف لام راء", "الف لام ر", "ألف لام ر", "الفلامرا"],
+
+  المر: ["المر", "الف لام ميم را", "ألف لام ميم را", "الف لام ميم راء", "ألف لام ميم راء", "الفلامميمرا"],
+
+  كهيعص: ["كهيعص", "كاف ها يا عين صاد", "كاف ها ياء عين صاد", "كاف هاء يا عين صاد", "كاف هاء ياء عين صاد"],
+
+  طه: ["طه", "طا ها", "طا هاء", "طاء ها", "طاء هاء"],
+
+  طسم: ["طسم", "طا سين ميم", "طاء سين ميم", "طا سين ميم"],
+
+  طس: ["طس", "طا سين", "طاء سين"],
+
+  يس: ["يس", "يا سين", "ياء سين"],
+
+  حم: ["حم", "حا ميم", "حاء ميم"],
+
+  "حم عسق": ["حم عسق", "حا ميم عين سين قاف", "حاء ميم عين سين قاف"],
+
+  ق: ["ق", "قاف"],
+
+  ن: ["ن", "نون"],
+};
+
+/* ============================================================
+   BASIC ARABIC NORMALIZATION
+============================================================ */
 
 /**
- * Bersihkan teks Arab: hilangkan tanda baca Quran (tashkeel, tanda waqaf,
- * tatweel), samakan variasi huruf (alef, ya, ta marbuta, hamza) supaya
- * perbandingan tidak gagal hanya karena beda gaya penulisan/ejaan hasil
- * speech-to-text.
+ * Normalisasi dasar teks Arab.
+ *
+ * Fungsi ini digunakan sebelum proses perbandingan.
  */
-export function normalizeArabic(str = '') {
-  return str
-    // ── Pengecualian: lafal "الله/لله" dan bentuk berimbuhan (بالله, تالله, dst).
-    // Alif kecil (dagger alif, U+0670) di sini murni tanda vokal panjang pada
-    // huruf lam kedua — BUKAN representasi huruf alif tersendiri yang dielisi
-    // dari rasm.
-    .replace(/ل\u0651?\u0670(?=ه)/g, (m) => m.replace(/\u0670/, ''))
+export function normalizeArabic(str = "") {
+  return (
+    String(str)
+      /*
+       * Dagger alif pada lafaz Allah (اللّٰه -> الله).
+       */
+      .replace(/ل\u0651?\u0670(?=ه)/g, (m) => m.replace(/\u0670/, ""))
 
-    // ── Pengecualian: alif maksura + dagger alif di akhir kata (عَلَىٰ, يَتَامَىٰ,
-    // مُصْطَفَىٰ, عِيسَىٰ, dst). Dagger alif di sini murni penanda panjang bacaan
-    // pada huruf ى itu sendiri — BUKAN huruf alif tambahan yang berdiri sendiri.
-    // Harus diproses SEBELUM rule generik \u0670 → 'ا' di bawah, dan SEBELUM
-    // rule ى → ي di bawah, supaya tidak menghasilkan huruf ganda (mis. "عليا"
-    // alih-alih "علي" untuk kata عَلَىٰ).
-    .replace(/ى\u0670/g, 'ي')
+      /*
+       * Waw dengan dagger alif pada rasm Utsmani (الصَّلَوٰة -> الصلاة, الزَّكَوٰة -> الزكاة, الحَيَوٰة -> الحياة, الرِّبَوٰا -> الربا).
+       */
+      .replace(/و[\u0670\u065C]?[\u0627\u0671]?\u06DF?/g, (m) => (m.includes("\u0670") ? "ا" : m))
 
-    // Alif kecil di atas huruf (dagger alif / alif khanjariyah, U+0670) DIUBAH
-    // JADI huruf alif biasa ('ا'), BUKAN dihapus, untuk kasus umum lainnya —
-    // misalnya "مَٰلِكِ" (Al-Fatihah 1:4), "هَٰذَا", "رَحْمَٰن".
-    .replace(/\u0670/g, 'ا')
+      /*
+       * Alif maksura + dagger alif.
+       *
+       * عَلَىٰ -> علي
+       */
+      .replace(/ى\u0670/g, "ي")
 
-    // Harakat, tanwin, sukun, tanda quran (waqaf dll), lainnya
-    .replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED\u08D4-\u08FF]/g, '')
+      /*
+       * Dagger alif umum (الرَّحْمَٰن -> الرحمان -> الرحمن).
+       */
+      .replace(/\u0670/g, "ا")
 
-    // Tatweel (garis sambung)
-    .replace(/\u0640/g, '')
+      /*
+       * Harakat dan tanda baca Qur'an (fathah, kasrah, dhammah, sukun, syaddah, tanwin, tanda waqaf rasm).
+       */
+      .replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED\u08D4-\u08FF]/g, "")
 
-    // Samakan bentuk alef & hamza di atas/bawah alef
-    .replace(/[إأآٱا]/g, 'ا')
+      /*
+       * Tatweel (kashida).
+       */
+      .replace(/\u0640/g, "")
 
-    // Alif maksura (ى) disamakan dengan Ya (ي) agar konsisten
-    // dengan hasil STT (misal: "على" vs "علي" terbaca sama)
-    .replace(/ى/g, 'ي')
+      /*
+       * Variasi alif dan hamzah di awal/tengah.
+       *
+       * إ أ آ ٱ ا -> ا
+       */
+      .replace(/[إأآٱا]/g, "ا")
 
-    // Ta marbuta -> ha (biar "الرحمة" vs "الرحمه" dianggap sama)
-    .replace(/ة/g, 'ه')
+      /*
+       * Alif maksura.
+       */
+      .replace(/ى/g, "ي")
 
-    // Hamza di atas wawu/ya -> huruf dasarnya
-    .replace(/ؤ/g, 'و')
-    .replace(/ئ/g, 'ي')
+      /*
+       * Ta marbuta (ة -> ه).
+       */
+      .replace(/ة/g, "ه")
 
-    // Buang selain huruf Arab & spasi (angka, tanda baca, dsb)
-    .replace(/[^\u0621-\u064A\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+      /*
+       * Hamzah waw / ya / standalone hamzah.
+       */
+      .replace(/ؤ/g, "و")
+      .replace(/ئ/g, "ي")
+
+      /*
+       * Beberapa variasi huruf keyboard/STT (Persian/Urdu variants).
+       */
+      .replace(/ک/g, "ك")
+      .replace(/ی/g, "ي")
+      .replace(/ے/g, "ي")
+
+      /*
+       * Buang karakter selain Arab dan spasi.
+       */
+      .replace(/[^\u0621-\u064A\s]/g, "")
+
+      /*
+       * Normalisasi whitespace.
+       */
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
-function toWords(str) {
-  const n = normalizeArabic(str);
-  return n ? n.split(' ') : [];
-}
+/* ============================================================
+   NORMALIZE MUQATTA'AH
+============================================================ */
 
 /**
- * Word-level diff berbasis LCS antara array kata "benar" (a) dan
- * array kata "ucapan user" (b). Mengembalikan array langkah dengan
- * type: 'match' | 'missing' (ada di teks benar, tidak terucap/tidak
- * terdengar sama) | 'extra' (terucap tapi tidak ada di teks benar / salah).
+ * Mengubah bentuk bacaan huruf muqatta'ah
+ * menjadi bentuk canonical.
+ *
+ * Contoh:
+ *
+ * "الف لام ميم"
+ *        ↓
+ * "الم"
  */
-export function diffWords(a, b) {
-  const n = a.length;
-  const m = b.length;
-  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+function normalizeMuqattaah(str = "") {
+  const normalized = normalizeArabic(str);
 
+  if (!normalized) {
+    return "";
+  }
+
+  for (const [canonical, aliases] of Object.entries(MUQATTAAH_ALIASES)) {
+    /*
+     * Cek bentuk canonical.
+     */
+    if (normalizeArabic(canonical) === normalized) {
+      return canonical;
+    }
+
+    /*
+     * Cek semua alias.
+     */
+    for (const alias of aliases) {
+      if (normalizeArabic(alias) === normalized) {
+        return canonical;
+      }
+    }
+  }
+
+  return normalized;
+}
+
+/* ============================================================
+   GET MUQATTA'AH CANONICAL
+============================================================ */
+
+/**
+ * Mengembalikan bentuk canonical huruf muqatta'ah.
+ *
+ * Contoh:
+ *
+ * getMuqattaahCanonical("الم")
+ * -> "الم"
+ *
+ * getMuqattaahCanonical("الف لام ميم")
+ * -> "الم"
+ *
+ * getMuqattaahCanonical("ألف لام ميم")
+ * -> "الم"
+ */
+function getMuqattaahCanonical(text = "") {
+  const normalized = normalizeArabic(text);
+
+  if (!normalized) {
+    return null;
+  }
+
+  for (const [canonical, aliases] of Object.entries(MUQATTAAH_ALIASES)) {
+    /*
+     * Canonical.
+     */
+    if (normalizeArabic(canonical) === normalized) {
+      return canonical;
+    }
+
+    /*
+     * Alias.
+     */
+    for (const alias of aliases) {
+      if (normalizeArabic(alias) === normalized) {
+        return canonical;
+      }
+    }
+  }
+
+  return null;
+}
+
+/* ============================================================
+   COMPARE MUQATTA'AH
+============================================================ */
+
+/**
+ * Membandingkan ayat yang berupa huruf muqatta'ah.
+ */
+function compareMuqattaah(correctText, recognizedText) {
+  const correctCanonical = getMuqattaahCanonical(correctText);
+
+  /*
+   * Kalau ayat bukan muqatta'ah,
+   * biarkan comparator normal yang bekerja.
+   */
+  if (!correctCanonical) {
+    return null;
+  }
+
+  const userCanonical = getMuqattaahCanonical(recognizedText);
+
+  /*
+   * STT kosong.
+   */
+  if (!userCanonical) {
+    return {
+      isCorrect: false,
+      score: 0,
+      status: "wrong",
+
+      correctSteps: [
+        {
+          word: correctCanonical,
+          ok: false,
+          type: "missing",
+        },
+      ],
+
+      userSteps: [],
+
+      matchCount: 0,
+      totalWords: 1,
+
+      message: "Bacaan belum terbaca. Coba ulangi dengan suara yang jelas.",
+    };
+  }
+
+  /*
+   * ========================================================
+   * PERBANDINGAN CANONICAL
+   * ========================================================
+   *
+   * Contoh:
+   *
+   * correct = "الم"
+   * user    = "الف لام ميم"
+   *
+   * correctCanonical = "الم"
+   * userCanonical    = "الم"
+   *
+   * hasil:
+   * isCorrect = true
+   */
+
+  if (correctCanonical === userCanonical) {
+    return {
+      isCorrect: true,
+
+      score: 1,
+
+      status: "excellent",
+
+      correctSteps: [
+        {
+          word: correctCanonical,
+          ok: true,
+          type: "match",
+        },
+      ],
+
+      userSteps: [
+        {
+          word: userCanonical,
+          ok: true,
+          type: "match",
+        },
+      ],
+
+      matchCount: 1,
+      totalWords: 1,
+
+      message: "Bacaan sangat baik.",
+    };
+  }
+
+  /*
+   * Muqatta'ah berbeda.
+   */
+  return {
+    isCorrect: false,
+
+    score: 0,
+
+    status: "wrong",
+
+    correctSteps: [
+      {
+        word: correctCanonical,
+        ok: false,
+        type: "missing",
+      },
+    ],
+
+    userSteps: [
+      {
+        word: normalizeArabic(recognizedText),
+        ok: false,
+        type: "extra",
+      },
+    ],
+
+    matchCount: 0,
+    totalWords: 1,
+
+    message: "Bacaan huruf pembuka belum sesuai.",
+  };
+}
+
+/* ============================================================
+   WORD DIFF - LCS
+============================================================ */
+
+/**
+ * Membandingkan dua array kata menggunakan LCS.
+ */
+export function diffWords(correctWords, userWords) {
+  const n = correctWords.length;
+  const m = userWords.length;
+
+  const dp = Array.from(
+    {
+      length: n + 1,
+    },
+    () => new Array(m + 1).fill(0),
+  );
+
+  /*
+   * Bangun tabel LCS.
+   */
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      if (correctWords[i] === userWords[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
     }
   }
 
   const steps = [];
+
   let i = 0;
   let j = 0;
+
+  /*
+   * Ambil hasil diff.
+   */
   while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      steps.push({ type: 'match', word: a[i] });
-      i++; j++;
+    if (correctWords[i] === userWords[j]) {
+      steps.push({
+        type: "match",
+
+        correctWord: correctWords[i],
+
+        userWord: userWords[j],
+      });
+
+      i++;
+      j++;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      steps.push({ type: 'missing', word: a[i] });
+      steps.push({
+        type: "missing",
+
+        correctWord: correctWords[i],
+
+        userWord: null,
+      });
+
       i++;
     } else {
-      steps.push({ type: 'extra', word: b[j] });
+      steps.push({
+        type: "extra",
+
+        correctWord: null,
+
+        userWord: userWords[j],
+      });
+
       j++;
     }
   }
-  while (i < n) { steps.push({ type: 'missing', word: a[i] }); i++; }
-  while (j < m) { steps.push({ type: 'extra', word: b[j] }); j++; }
+
+  /*
+   * Sisa kata ayat yang belum terbaca.
+   */
+  while (i < n) {
+    steps.push({
+      type: "missing",
+
+      correctWord: correctWords[i],
+
+      userWord: null,
+    });
+
+    i++;
+  }
+
+  /*
+   * Sisa kata dari user.
+   */
+  while (j < m) {
+    steps.push({
+      type: "extra",
+
+      correctWord: null,
+
+      userWord: userWords[j],
+    });
+
+    j++;
+  }
 
   return steps;
 }
 
+/* ============================================================
+   WORD TOKENIZER
+============================================================ */
+
 /**
- * Bandingkan hasil ucapan (recognizedText) dengan ayat asli (correctText).
- * Return: { isCorrect, score, correctSteps, userSteps }
- * - correctSteps: langkah diff untuk ditampilkan di baris "ayat yang benar"
- * - userSteps: langkah diff untuk ditampilkan di baris "bacaan kamu"
- * - score: rasio kata yang match terhadap total kata di ayat asli
+ * Mengubah teks menjadi array kata.
+ */
+function toWords(str) {
+  const normalized = normalizeArabic(str);
+
+  return normalized ? normalized.split(" ") : [];
+}
+
+/* ============================================================
+   MAIN COMPARE
+============================================================ */
+
+/**
+ * Fungsi utama untuk membandingkan bacaan.
+ *
+ * @param {string} correctText
+ * @param {string} recognizedText
+ * @param {number} threshold
+ *
+ * @returns {{
+ *   isCorrect: boolean,
+ *   score: number,
+ *   status: string,
+ *   correctSteps: Array,
+ *   userSteps: Array,
+ *   matchCount: number,
+ *   totalWords: number,
+ *   message: string
+ * }}
  */
 export function compareRecitation(correctText, recognizedText, threshold = 0.75) {
-  const correctWords = toWords(correctText);
-  const userWords = toWords(recognizedText);
+  /*
+   * ========================================================
+   * 1. CEK MUQATTA'AH TERLEBIH DAHULU
+   * ========================================================
+   */
 
-  if (correctWords.length === 0) {
-    return { isCorrect: false, score: 0, correctSteps: [], userSteps: [] };
+  const muqattaahResult = compareMuqattaah(correctText, recognizedText);
+
+  /*
+   * Kalau merupakan muqatta'ah,
+   * langsung gunakan hasil tersebut.
+   */
+  if (muqattaahResult) {
+    return muqattaahResult;
   }
 
-  const steps = diffWords(correctWords, userWords);
-  const matchCount = steps.filter(s => s.type === 'match').length;
-  const score = matchCount / correctWords.length;
+  /*
+   * ========================================================
+   * 2. NORMAL WORD COMPARISON
+   * ========================================================
+   */
 
-  // Susun ulang jadi dua "baris" terpisah supaya gampang dirender:
+  const correctWords = toWords(correctText);
+
+  const userWords = toWords(recognizedText);
+
+  /*
+   * Ayat kosong.
+   */
+  if (correctWords.length === 0) {
+    return {
+      isCorrect: false,
+      score: 0,
+      status: "error",
+
+      correctSteps: [],
+
+      userSteps: [],
+
+      matchCount: 0,
+
+      totalWords: 0,
+
+      message: "Ayat referensi tidak tersedia.",
+    };
+  }
+
+  /*
+   * STT kosong.
+   */
+  if (userWords.length === 0) {
+    return {
+      isCorrect: false,
+
+      score: 0,
+
+      status: "wrong",
+
+      correctSteps: correctWords.map((word) => ({
+        word,
+        ok: false,
+        type: "missing",
+      })),
+
+      userSteps: [],
+
+      matchCount: 0,
+
+      totalWords: correctWords.length,
+
+      message: "Bacaan belum terbaca. Coba ulangi dengan suara yang jelas.",
+    };
+  }
+
+  /*
+   * ========================================================
+   * 3. LCS DIFF
+   * ========================================================
+   */
+
+  const steps = diffWords(correctWords, userWords);
+
+  /*
+   * ========================================================
+   * 4. HITUNG KATA YANG COCOK
+   * ========================================================
+   */
+
+  const matchCount = steps.filter((step) => step.type === "match").length;
+
+  /*
+   * ========================================================
+   * 5. HITUNG SCORE
+   * ========================================================
+   */
+
+  const score = Math.min(1, matchCount / correctWords.length);
+
+  /*
+   * ========================================================
+   * 6. TENTUKAN STATUS
+   * ========================================================
+   */
+
+  let status;
+
+  if (score >= 0.9) {
+    status = "excellent";
+  } else if (score >= threshold) {
+    status = "good";
+  } else {
+    status = "wrong";
+  }
+
+  /*
+   * ========================================================
+   * 7. AYAT BENAR
+   * ========================================================
+   */
+
   const correctSteps = steps
-    .filter(s => s.type === 'match' || s.type === 'missing')
-    .map(s => ({ word: s.word, ok: s.type === 'match' }));
+    .filter((step) => step.type === "match" || step.type === "missing")
+    .map((step) => ({
+      word: step.correctWord,
+
+      ok: step.type === "match",
+
+      type: step.type,
+    }));
+
+  /*
+   * ========================================================
+   * 8. BACAAN USER
+   * ========================================================
+   */
 
   const userSteps = steps
-    .filter(s => s.type === 'match' || s.type === 'extra')
-    .map(s => ({ word: s.word, ok: s.type === 'match' }));
+    .filter((step) => step.type === "match" || step.type === "extra")
+    .map((step) => ({
+      word: step.userWord,
+
+      ok: step.type === "match",
+
+      type: step.type,
+    }));
+
+  /*
+   * ========================================================
+   * 9. RETURN HASIL
+   * ========================================================
+   */
 
   return {
     isCorrect: score >= threshold,
+
     score,
+
+    status,
+
     correctSteps,
+
     userSteps,
+
+    matchCount,
+
+    totalWords: correctWords.length,
+
+    message: status === "excellent" ? "Bacaan sangat baik." : status === "good" ? "Bacaan cukup sesuai." : "Bacaan belum cukup sesuai.",
   };
 }

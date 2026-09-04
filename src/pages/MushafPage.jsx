@@ -282,7 +282,7 @@ export default function MushafPage() {
 
   const exitHafalan = () => {
     manualStopRef.current = true;
-    recognitionRef.current?.stop?.();
+    cleanupRecognition();
     setHafalanActive(false);
     hafalanCursorRef.current = null;
     setHafalanCursor(null);
@@ -438,13 +438,136 @@ export default function MushafPage() {
     }
   }, []);
 
+  const restartTimerRef  = useRef(null);
+  const wrongPopupRef    = useRef(null);
+  useEffect(() => { wrongPopupRef.current = wrongPopup; }, [wrongPopup]);
+  const hafalanActiveRef = useRef(false);
+  useEffect(() => { hafalanActiveRef.current = hafalanActive; }, [hafalanActive]);
+
+  const cleanupRecognition = useCallback(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+    const rec = recognitionRef.current;
+    if (rec) {
+      rec.onresult = null;
+      rec.onerror = null;
+      rec.onend = null;
+      try { rec.abort?.(); } catch {}
+      try { rec.stop?.(); } catch {}
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  const createAndStartRecognition = useCallback(() => {
+    if (manualStopRef.current || !hafalanActiveRef.current) {
+      setMicState('idle');
+      return;
+    }
+
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setMicError('Speech Recognition tidak tersedia di browser ini.');
+      setMicState('idle');
+      manualStopRef.current = true;
+      return;
+    }
+
+    cleanupRecognition();
+
+    try {
+      const recognition = new SpeechRecognitionCtor();
+      recognition.lang = 'ar-SA';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = (event) => {
+        if (wrongPopupRef.current) return;
+
+        let finalText = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const t = event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) finalText += ' ' + t;
+          else interim += t;
+        }
+        setInterimText(interim);
+
+        if (interim.trim()) {
+          previewOptimisticReveal(interim);
+        }
+
+        if (finalText.trim()) {
+          const hasLatinChars = /[a-zA-Z]/.test(finalText);
+          const newWords = normalizeArabic(finalText).split(' ').filter(Boolean);
+
+          if (newWords.length === 0 && hasLatinChars) {
+            setMicError('Mic mendeteksi karakter non-Arab. Pastikan pelafalan jelas dan bahasa mikrofon berbahasa Arab.');
+          } else if (newWords.length > 0) {
+            setMicError(null);
+            spokenWordsRef.current = [...spokenWordsRef.current, ...newWords];
+            evaluateBuffer();
+          }
+        }
+      };
+
+      recognition.onerror = (event) => {
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          manualStopRef.current = true;
+          setMicState('idle');
+          setMicError(
+            isSecureContextForMic
+              ? 'Akses mikrofon ditolak. Klik ikon gembok/setelan izin mikrofon di bilah alamat browser untuk mengizinkan.'
+              : 'Akses mikrofon diblokir otomatis karena halaman ini dibuka lewat koneksi tidak aman (bukan HTTPS/localhost).'
+          );
+        } else if (event.error === 'network') {
+          setMicError('Koneksi internet untuk pengenalan suara terganggu. Periksa sambungan internet.');
+        } else if (event.error === 'audio-capture') {
+          manualStopRef.current = true;
+          setMicState('idle');
+          setMicError('Mikrofon tidak terdeteksi pada perangkat Anda.');
+        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+          setMicError('Terjadi gangguan saat merekam, menyambung ulang…');
+        }
+      };
+
+      recognition.onend = () => {
+        if (!manualStopRef.current && hafalanActiveRef.current) {
+          restartTimerRef.current = setTimeout(() => {
+            if (!manualStopRef.current && hafalanActiveRef.current) {
+              createAndStartRecognition();
+            }
+          }, 60);
+        } else {
+          setMicState('idle');
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setMicState('listening');
+    } catch {
+      if (!manualStopRef.current && hafalanActiveRef.current) {
+        restartTimerRef.current = setTimeout(() => {
+          if (!manualStopRef.current && hafalanActiveRef.current) {
+            createAndStartRecognition();
+          }
+        }, 200);
+      } else {
+        setMicState('idle');
+      }
+    }
+  }, [cleanupRecognition, evaluateBuffer, isSecureContextForMic, previewOptimisticReveal]);
+
   const startListening = () => {
     if (!speechSupported) {
-      setMicError('Browser kamu belum mendukung rekam suara. Coba pakai Chrome/Edge terbaru.');
+      setMicError('Browser kamu belum mendukung rekam suara. Coba pakai Google Chrome atau Microsoft Edge terbaru.');
       return;
     }
     if (!isSecureContextForMic) {
-      setMicError('Akses mic butuh koneksi aman (HTTPS) atau alamat "localhost". Membuka lewat IP jaringan lokal (http://192.168.x.x) tidak akan pernah memunculkan izin mic.');
+      setMicError('Akses mic butuh koneksi aman (HTTPS) atau alamat "localhost". Membuka lewat IP jaringan lokal (http://192.168.x.x) diblokir browser.');
       return;
     }
     setMicError(null);
@@ -455,93 +578,28 @@ export default function MushafPage() {
     wrongStreakRef.current = 0;
     setTargetWordCursor(0);
     manualStopRef.current = false;
-
-    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = 'ar-SA';
-    recognition.continuous = true;    // jangan berhenti sendiri gara-gara jeda napas/waqaf
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event) => {
-      let finalText = '';
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += ' ' + t;
-        else interim += t;
-      }
-      setInterimText(interim);
-
-      // Reveal secepat mungkin dari interim (belum final) — supaya kata muncul
-      // live per-kata, tidak menunggu satu ayat/segmen penuh ditandai final.
-      if (interim.trim()) {
-        previewOptimisticReveal(interim);
-      }
-
-      if (finalText.trim()) {
-        const hasLatinChars = /[a-zA-Z]/.test(finalText);
-        const newWords = normalizeArabic(finalText).split(' ').filter(Boolean);
-
-        if (newWords.length === 0 && hasLatinChars) {
-          // Transkrip keluar huruf Latin (mesin salah mendeteksi bahasa), bukan
-          // berarti bacaan user salah — jangan dihitung sebagai kata salah,
-          // cukup beri tahu dan biarkan mic tetap menyala menunggu ucapan berikutnya.
-          setMicError('Mic sepertinya mendeteksi bahasa lain (bukan Arab). Cek pengaturan bahasa mic di perangkat/browser, lalu coba lagi.');
-        } else if (newWords.length > 0) {
-          setMicError(null);
-          spokenWordsRef.current = [...spokenWordsRef.current, ...newWords];
-          evaluateBuffer();
-        }
-      }
-    };
-
-    recognition.onerror = (event) => {
-      // 'no-speech' itu wajar kalau user lagi ambil napas — jangan tampilkan sebagai error,
-      // biarkan onend yang menyambung ulang mic otomatis.
-      if (event.error === 'not-allowed' || event.error === 'permission-denied') {
-        manualStopRef.current = true;
-        setMicState('idle');
-        setMicError(
-          isSecureContextForMic
-            ? 'Akses mikrofon ditolak. Izinkan akses mic di pengaturan browser.'
-            : 'Akses mikrofon ditolak otomatis karena halaman ini dibuka lewat koneksi tidak aman (bukan https/localhost).'
-        );
-      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        setMicError('Terjadi gangguan saat merekam, menyambung ulang…');
-      }
-    };
-
-    recognition.onend = () => {
-      // Beberapa browser otomatis memutus sesi kalau hening agak lama (misal user waqaf/ambil
-      // napas panjang). Selama belum ditekan "Berhenti", sambung lagi sendiri tanpa perlu pencet mic.
-      if (!manualStopRef.current) {
-        try { recognition.start(); } catch { /* sesi masih berjalan, abaikan */ }
-      } else {
-        setMicState('idle');
-      }
-    };
-
-    recognitionRef.current = recognition;
-    setMicState('listening');
-    recognition.start();
+    createAndStartRecognition();
   };
 
   const stopListening = () => {
     manualStopRef.current = true;
-    recognitionRef.current?.stop?.();
+    cleanupRecognition();
     setMicState('idle');
   };
 
   const retrySameAyah = () => {
-    // buang kata yang salah, mulai lagi dari nol untuk ayat yang sama — mic tetap menyala
     spokenWordsRef.current = [];
     wordCursorRef.current = 0;
     wrongStreakRef.current = 0;
     setTargetWordCursor(0);
     setWrongPopup(null);
     setInterimText('');
+    setMicError(null);
+    if (manualStopRef.current) {
+      startListening();
+    }
   };
+
   const skipRevealAnyway = () => {
     const target = targetAyahRef.current;
     if (!target) return;
@@ -559,6 +617,9 @@ export default function MushafPage() {
     } else {
       hafalanCursorRef.current = target.number + 1;
       setHafalanCursor(target.number + 1);
+    }
+    if (manualStopRef.current) {
+      startListening();
     }
   };
 

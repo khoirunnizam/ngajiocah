@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 
@@ -49,8 +49,12 @@ export default function Header() {
             Mushaf
           </NavLink>
 
-          <NavLink to="/komunitas" className={navClass}>
-            Komunitas
+          <NavLink to="/hafalan" className={navClass}>
+            Hafalan
+          </NavLink>
+
+          <NavLink to="/Aduan" className={navClass}>
+            Aduan
           </NavLink>
         </nav>
 
@@ -82,8 +86,12 @@ export default function Header() {
               Mushaf
             </NavLink>
 
-            <NavLink to="/komunitas" onClick={closeMenu} className={mobileNavClass}>
-              Komunitas
+            <NavLink to="/hafalan" onClick={closeMenu} className={mobileNavClass}>
+              Hafalan
+            </NavLink>
+
+            <NavLink to="/Aduan" onClick={closeMenu} className={mobileNavClass}>
+              Aduan
             </NavLink>
           </nav>
         </div>
