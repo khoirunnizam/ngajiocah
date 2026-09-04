@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 
 import { getAllSurahs, getSurah, EDITIONS } from "../services/quranApi";
 
-import { compareRecitation } from "../utils/arabicCompare";
+import { compareRecitation, getTranscriptDelta } from "../utils/arabicCompare";
 
 /* =========================================================
    KONFIGURASI
@@ -23,7 +23,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      SETUP
-  ======================================================= */
+   ======================================================= */
 
   const [surahs, setSurahs] = useState([]);
   const [loadingSurahs, setLoadingSurahs] = useState(true);
@@ -34,7 +34,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      SESSION
-  ======================================================= */
+   ======================================================= */
 
   const [stage, setStage] = useState("setup");
 
@@ -50,7 +50,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      VOICE
-  ======================================================= */
+   ======================================================= */
 
   const [micState, setMicState] = useState("idle");
   const [interimText, setInterimText] = useState("");
@@ -61,6 +61,8 @@ export default function HafalanPage() {
   const silenceTimerRef = useRef(null);
   const manualStopRef = useRef(true);
   const accumulatedTranscriptRef = useRef("");
+  const sessionFinalTextRef = useRef("");
+  const wakeLockRef = useRef(null);
   const currentAyahRef = useRef(null);
 
   const speechSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -73,13 +75,13 @@ export default function HafalanPage() {
 
   /* =======================================================
      RESULT
-  ======================================================= */
+   ======================================================= */
 
   const [popup, setPopup] = useState(null);
 
   /* =======================================================
      LOAD SURAH LIST
-  ======================================================= */
+   ======================================================= */
 
   useEffect(() => {
     let mounted = true;
@@ -108,7 +110,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      CLEANUP MIC
-  ======================================================= */
+   ======================================================= */
 
   const stopRecognitionSafely = useCallback(() => {
     manualStopRef.current = true;
@@ -133,6 +135,12 @@ export default function HafalanPage() {
       recognitionRef.current = null;
     }
 
+    sessionFinalTextRef.current = "";
+    if (wakeLockRef.current) {
+      try { wakeLockRef.current.release(); } catch {}
+      wakeLockRef.current = null;
+    }
+
     setMicState("idle");
   }, []);
 
@@ -144,7 +152,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      CURRENT SURAH
-  ======================================================= */
+   ======================================================= */
 
   const currentSurahInfo = surahs.find((s) => s.number === Number(selectedSurah));
   const maxAyah = currentSurahInfo?.numberOfAyahs ?? 999;
@@ -156,29 +164,25 @@ export default function HafalanPage() {
 
   /* =======================================================
      MOVE NEXT AYAH
-  ======================================================= */
+   ======================================================= */
 
   const moveNextAyah = useCallback(() => {
-    stopRecognitionSafely();
-
-    setInterimText("");
-    setMicError(null);
-
     if (!surahMeta) return;
 
-    const lastAyah = cursor >= surahMeta.ayahs.length - 1;
-
-    if (lastAyah) {
-      setStage("finished");
-      return;
+    if (cursor + 1 < surahMeta.ayahs.length) {
+      setCursor((prev) => prev + 1);
+      setInterimText("");
+      accumulatedTranscriptRef.current = "";
+      sessionFinalTextRef.current = "";
+    } else {
+      setStage("done");
+      stopRecognitionSafely();
     }
-
-    setCursor((prev) => prev + 1);
-  }, [cursor, surahMeta, stopRecognitionSafely]);
+  }, [cursor, stopRecognitionSafely, surahMeta]);
 
   /* =======================================================
      START SESSION
-  ======================================================= */
+   ======================================================= */
 
   const startSession = async () => {
     stopRecognitionSafely();
@@ -208,7 +212,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      BACK TO SETUP
-  ======================================================= */
+   ======================================================= */
 
   const backToSetup = () => {
     stopRecognitionSafely();
@@ -220,39 +224,33 @@ export default function HafalanPage() {
   };
 
   /* =======================================================
-     REVEAL AYAH
-  ======================================================= */
+     REVEAL CURRENT AYAH
+   ======================================================= */
 
   const revealCurrentAyah = useCallback(() => {
-    if (!currentAyah) return;
-
     setRevealed((prev) => {
-      const alreadyExists = prev.some((a) => a.number === currentAyah.number);
-
-      if (alreadyExists) {
-        return prev;
-      }
-
-      return [...prev, currentAyah];
+      if (prev.includes(cursor)) return prev;
+      return [...prev, cursor];
     });
-  }, [currentAyah]);
+  }, [cursor]);
 
   /* =======================================================
-     EXCELLENT
-  ======================================================= */
+     EXCELLENT / GREEN
+   ======================================================= */
 
   const handleExcellent = useCallback(() => {
     revealCurrentAyah();
-
     setPopup(null);
     setInterimText("");
+    accumulatedTranscriptRef.current = "";
+    sessionFinalTextRef.current = "";
 
     moveNextAyah();
   }, [revealCurrentAyah, moveNextAyah]);
 
   /* =======================================================
      GOOD / YELLOW
-  ======================================================= */
+   ======================================================= */
 
   const handleGood = useCallback((result) => {
     setPopup({
@@ -263,7 +261,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      WRONG / RED
-  ======================================================= */
+   ======================================================= */
 
   const handleWrong = useCallback((result) => {
     setPopup({
@@ -274,7 +272,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      EVALUATE
-  ======================================================= */
+   ======================================================= */
 
   const evaluate = useCallback(
     (recognizedText) => {
@@ -315,7 +313,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      CREATE AND START RECOGNITION
-  ======================================================= */
+   ======================================================= */
 
   const createAndStartRecognition = useCallback(() => {
     if (manualStopRef.current) {
@@ -331,21 +329,13 @@ export default function HafalanPage() {
       return;
     }
 
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
+    stopRecognitionSafely();
+    manualStopRef.current = false;
+    sessionFinalTextRef.current = "";
 
-    const oldRec = recognitionRef.current;
-    if (oldRec) {
-      try {
-        oldRec.onresult = null;
-        oldRec.onerror = null;
-        oldRec.onend = null;
-        oldRec.abort?.();
-        oldRec.stop?.();
-      } catch {}
-      recognitionRef.current = null;
+    // Minta wakeLock di HP agar layar tidak mati saat merekam hafalan
+    if (typeof navigator !== "undefined" && "wakeLock" in navigator) {
+      navigator.wakeLock.request("screen").then((wl) => { wakeLockRef.current = wl; }).catch(() => {});
     }
 
     try {
@@ -356,20 +346,39 @@ export default function HafalanPage() {
       recognition.maxAlternatives = 1;
 
       recognition.onresult = (event) => {
-        let currentFinalChunk = "";
+        let fullSessionFinal = "";
         let interim = "";
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0]?.transcript || "";
-          if (event.results[i].isFinal) {
-            currentFinalChunk += " " + transcript;
+        for (let i = 0; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (!result || !result[0]) continue;
+          const transcript = result[0].transcript || "";
+
+          if (result.isFinal) {
+            fullSessionFinal += " " + transcript;
           } else {
             interim += transcript;
           }
         }
 
-        if (currentFinalChunk.trim()) {
-          accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current + " " + currentFinalChunk).trim();
+        fullSessionFinal = fullSessionFinal.trim();
+
+        // Ekstraksi delta cerdas: mencegah pengulangan teks akibat akumulasi otomatis di browser HP
+        if (fullSessionFinal) {
+          const delta = getTranscriptDelta(sessionFinalTextRef.current, fullSessionFinal);
+          sessionFinalTextRef.current = fullSessionFinal;
+
+          if (delta.trim()) {
+            const currentAcc = accumulatedTranscriptRef.current;
+            if (!currentAcc) {
+              accumulatedTranscriptRef.current = delta.trim();
+            } else {
+              const deltaAppend = getTranscriptDelta(currentAcc, currentAcc + " " + delta.trim());
+              if (deltaAppend) {
+                accumulatedTranscriptRef.current = (currentAcc + " " + deltaAppend).trim();
+              }
+            }
+          }
         }
 
         const fullSpokenSoFar = (accumulatedTranscriptRef.current + " " + interim).trim();
@@ -398,8 +407,8 @@ export default function HafalanPage() {
 
         if (fullSpokenSoFar) {
           silenceTimerRef.current = setTimeout(() => {
-            if (!manualStopRef.current && accumulatedTranscriptRef.current.trim()) {
-              const textToCheck = accumulatedTranscriptRef.current.trim();
+            if (!manualStopRef.current && (accumulatedTranscriptRef.current.trim() || fullSpokenSoFar.trim())) {
+              const textToCheck = (accumulatedTranscriptRef.current.trim() || fullSpokenSoFar.trim());
               stopRecognitionSafely();
               setMicState("checking");
               window.setTimeout(() => {
@@ -429,17 +438,18 @@ export default function HafalanPage() {
           manualStopRef.current = true;
           setMicState("idle");
         } else if (event.error !== "no-speech" && event.error !== "aborted") {
-          setMicError("Terjadi gangguan saat merekam suara, menyambung ulang…");
+          // Diamkan event no-speech / aborted normal di HP
         }
       };
 
       recognition.onend = () => {
+        sessionFinalTextRef.current = "";
         if (!manualStopRef.current) {
           restartTimerRef.current = setTimeout(() => {
             if (!manualStopRef.current) {
               createAndStartRecognition();
             }
-          }, 60);
+          }, 300);
         } else {
           setMicState("idle");
         }
@@ -454,7 +464,7 @@ export default function HafalanPage() {
           if (!manualStopRef.current) {
             createAndStartRecognition();
           }
-        }, 200);
+        }, 350);
       } else {
         setMicState("idle");
       }
@@ -463,7 +473,7 @@ export default function HafalanPage() {
 
   /* =======================================================
      START LISTENING
-  ======================================================= */
+   ======================================================= */
 
   const startListening = () => {
     if (!speechSupported) {
@@ -480,13 +490,14 @@ export default function HafalanPage() {
     setPopup(null);
     setInterimText("");
     accumulatedTranscriptRef.current = "";
+    sessionFinalTextRef.current = "";
     manualStopRef.current = false;
     createAndStartRecognition();
   };
 
   /* =======================================================
      STOP LISTENING / FINISH CHECK
-  ======================================================= */
+   ======================================================= */
 
   const stopListening = () => {
     const textToCheck = (accumulatedTranscriptRef.current + " " + interimText).trim();

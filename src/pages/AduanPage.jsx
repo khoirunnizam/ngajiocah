@@ -71,27 +71,27 @@ export default function AduanPage() {
             {/* Header Salam */}
             <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border/60">
               <span className="text-2xl">👋</span>
-              <h2 className="text-lg sm:text-xl font-bold text-text-heading">Halo, Teman-teman Semua!</h2>
+              <h2 className="text-lg sm:text-xl font-bold text-text-heading">Halo Semuanya!</h2>
             </div>
 
             {/* Isi Cerita */}
             <div className="space-y-4 text-sm sm:text-base text-text-muted leading-relaxed">
               <p>
-                Aplikasi ini awalnya dibuat berangkat dari kebutuhan pribadi saya sendiri sebagai sesama mahasiswa UIN yang ingin punya <span className="text-accent font-semibold">tool simpel untuk muraja'ah dan menghafal Al-Qur'an</span>{" "}
-                di sela-sela kesibukan kuliah.
+                Aplikasi ini berawal dari kebutuhan pribadi saya sebagai seorang mahasiswa di <span className="text-accent font-semibold">UIN Sayyid Ali Rahmatullah Tulungagung (UIN SATU)</span> yang ingin memiliki <span className="text-accent font-semibold">tool simpel untuk muraja'ah dan menghafal Al-Qur'an</span> di sela-sela kesibukan kuliah.
               </p>
 
-              <p>Daripada hanya digunakan sendiri, pikir saya sekalian saja dikembangkan dan dibagikan. Siapa tahu bisa ikut membantu dan membawa manfaat untuk kita bersama dalam menjaga hafalan.</p>
+              <p>
+                Daripada hanya digunakan sendiri, saya memutuskan untuk mengembangkannya lebih lanjut agar bisa diakses dan digunakan oleh siapa saja. Harapannya, aplikasi ini bisa menjadi sarana yang bermanfaat bagi kita semua dalam menjaga hafalan Al-Qur'an.
+              </p>
 
               {/* Box Highlight Permintaan Feedback */}
               <div className="p-4 bg-accent/10 border border-accent/25 rounded-custom-sm text-text-heading my-2">
                 <p className="text-xs sm:text-sm font-medium text-text-heading">
-                  💡 <strong className="text-accent font-semibold">Bantu Sempurnakan:</strong> Karena masih dalam tahap pengembangan mandiri, jika ada waktu untuk mencoba aplikasinya, mohon bantuannya untuk memberikan saran atau melaporkan
-                  jika menemukan <span className="underline decoration-accent/50">error / kerusakan</span>.
+                  💡 <strong className="text-accent font-semibold">Bantu Sempurnakan:</strong> Karena aplikasi ini masih dalam tahap pengembangan mandiri, jika Anda sempat mencobanya, saya akan sangat berterima kasih atas saran, masukan, maupun laporan jika menemukan <span className="underline decoration-accent/50">error atau kendala teknis</span>.
                 </p>
               </div>
 
-              <p className="pt-1 text-xs sm:text-sm font-medium text-text-heading">Setiap masukan dari teman-teman akan sangat berharga untuk perbaikan ke depannya. Terima kasih banyak, semoga bermanfaat! 🙏✨</p>
+              <p className="pt-1 text-xs sm:text-sm font-medium text-text-heading"> Setiap masukan dari Anda akan sangat berharga untuk pengembangan aplikasi ini ke depannya. Terima kasih banyak, semoga bermanfaat! 🙏✨</p>
             </div>
           </div>
         </div>
